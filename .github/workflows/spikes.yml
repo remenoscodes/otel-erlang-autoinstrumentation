@@ -1,0 +1,79 @@
+name: spikes
+
+# Runs the two zero-code instrumentation spikes end-to-end on every push
+# and PR, across both OTP majors this repo's README/PROPOSAL claim to
+# support. This is the thing that keeps "Status: PASS" honest — anyone
+# reading the README can click through to a real, recent run instead of
+# taking the claim on faith.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  run-spikes:
+    name: OTP ${{ matrix.otp }} / Elixir ${{ matrix.elixir }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - otp: "25.3"
+            elixir: "1.17"
+          - otp: "28.0"
+            elixir: "1.20"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          elixir-version: ${{ matrix.elixir }}
+
+      - name: Install hex + rebar
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+
+      - name: Cache mix deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            vanilla_app/deps
+            vanilla_app/_build
+            otel_bundle/deps
+            otel_bundle/_build
+          key: mix-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('vanilla_app/mix.lock', 'otel_bundle/mix.lock') }}
+          restore-keys: |
+            mix-${{ matrix.otp }}-${{ matrix.elixir }}-
+
+      - name: Build vanilla_app (Phoenix release, zero OTel deps)
+        working-directory: vanilla_app
+        run: |
+          mix deps.get
+          MIX_ENV=prod mix release --overwrite
+
+      - name: Build otel_bundle (the auto-instrumentation distribution)
+        working-directory: otel_bundle
+        run: |
+          mix deps.get
+          MIX_ENV=prod mix compile
+
+      - name: Phase 0 + round 2 — Phoenix/Ecto zero-code spike
+        run: ./run_spike.sh
+
+      - name: Phase 0.5 — pure-Erlang Cowboy zero-code spike
+        run: ./run_spike_erlang.sh
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike-logs-otp${{ matrix.otp }}
+          path: |
+            /tmp/otel-spike/**
+            /tmp/otel-spike-erlang/**
+          if-no-files-found: ignore

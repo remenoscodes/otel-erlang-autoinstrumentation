@@ -1,5 +1,6 @@
 # Zero-code OpenTelemetry auto-instrumentation for BEAM releases
 
+[![spikes](https://github.com/remenoscodes/otel-erlang-autoinstrumentation/actions/workflows/spikes.yml/badge.svg)](https://github.com/remenoscodes/otel-erlang-autoinstrumentation/actions/workflows/spikes.yml)
 License: [Apache 2.0](./LICENSE)
 
 **Status: PASS on both tested hosts.** A production-style Phoenix
@@ -228,15 +229,18 @@ safe. This changes nothing about the mix-release case — the split is
 invisible there, since Kernel was always already loaded — but it's the
 difference between working and not working on a host with no Elixir.
 
-Two more OTP library apps had to join the staged bundle for this host,
+One more OTP library app had to join the staged bundle for this host,
 found the same way `:inets` was in round 1 (a `{error, {App, "no such file
 or directory"}}` from `Application.ensure_all_started/1`, since the app
 isn't even on the code path, as opposed to a load failure for something
-that is): `:compiler` (a runtime dependency of `:elixir` itself) and
-`:eex` (referenced by `:elixir`'s optional deps; missing it only logs a
-warning and continues, so it's likely not load-bearing for this specific
-Phoenix-less scenario, but staged anyway since it's cheap and `:elixir`
-lists it).
+that is): `:compiler`, a runtime dependency of `:elixir` itself.
+
+`:eex` is referenced by `:elixir`'s optional deps too, and shows up as a
+"cannot load app spec for eex" warning during the dependency-closure walk
+— but it was never actually staged (only `:elixir`/`:logger` are copied;
+`:eex` isn't). That every spike run still passes, on both OTP majors
+tested, is itself the answer to whether it's load-bearing: it isn't, for
+this scenario. See "Known gaps" below for the (narrow) remaining caveat.
 
 ### Finding: loaded-but-not-started is a different failure mode
 
@@ -359,14 +363,12 @@ collision and not a regression.)
 
 ## Known gaps
 
-- **`:eex` inclusion is unconfirmed as load-bearing.** It's referenced by
-  `:elixir`'s optional deps and staged defensively in
-  `run_spike_erlang.sh`, but the pure-Cowboy scenario tested here never
-  exercised a code path that needed it — the "cannot load app spec for
-  eex" warning is logged and harmless either way, reproduced identically
-  on both OTP 25 and OTP 28. Worth a deliberate test (remove it, confirm
-  nothing actually breaks) before dropping it from the bundle, but nothing
-  in two full OTP-major runs suggests it's required.
+- **`:eex` is confirmed non-load-bearing for the scenarios tested here** —
+  not staged in the bundle at all (only `:elixir`/`:logger` are), yet every
+  spike run passes on both OTP majors; the "cannot load app spec for eex"
+  warning is cosmetic. This is narrower than "eex is never needed" —
+  Phoenix apps that actually render EEx templates presumably do need it —
+  but for the plain-Cowboy scenario this repo validates, it's settled.
 - **Startup race is structural**, for both the endpoint-level version (any
   release) and the Cowboy-retrofit version (plain-Cowboy hosts) — see the
   moduledoc and the "Phase 0.5" retrofit section above. Not a bug to fix,
