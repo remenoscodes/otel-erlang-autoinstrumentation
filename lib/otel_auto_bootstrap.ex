@@ -144,27 +144,47 @@ defmodule OtelAutoBootstrap do
       for {ref, _info} <- :ranch.info() do
         opts = :ranch.get_protocol_options(ref)
 
-        case opts do
-          %{stream_handlers: handlers} ->
-            unless :cowboy_telemetry_h in handlers do
-              :ranch.set_protocol_options(ref, %{opts | stream_handlers: [:cowboy_telemetry_h | handlers]})
-              log("retrofitted cowboy_telemetry_h onto ranch listener #{inspect(ref)}")
-            end
-
-          %{} ->
-            # No stream_handlers key at all means Cowboy is about to apply
-            # its own default ([cowboy_stream_h]) internally — reproduce
-            # that default explicitly so ours can sit in front of it.
-            updated = Map.put(opts, :stream_handlers, [:cowboy_telemetry_h, :cowboy_stream_h])
+        case updated_protocol_options(opts) do
+          {:changed, updated, reason} ->
             :ranch.set_protocol_options(ref, updated)
-            log("retrofitted cowboy_telemetry_h onto ranch listener #{inspect(ref)} (default stream_handlers)")
+            log("retrofitted cowboy_telemetry_h onto ranch listener #{inspect(ref)} (#{reason})")
 
-          _ ->
+          :unchanged ->
             :ok
         end
       end
     else
       log("cowboy_telemetry not in bundle; cannot retrofit plain-Cowboy listeners")
+    end
+  end
+
+  @doc false
+  # Pure decision logic for retrofit_cowboy_telemetry/0, split out so it's
+  # unit-testable without a running ranch listener. Given a listener's
+  # current protocol options:
+  #   - no `stream_handlers` key at all: Cowboy is about to apply its own
+  #     default ([cowboy_stream_h]) internally — reproduce that default
+  #     explicitly so ours can sit in front of it.
+  #   - `stream_handlers` present, `cowboy_telemetry_h` not yet in it:
+  #     prepend it.
+  #   - already present (e.g. a second retrofit attempt, or an app that
+  #     already had it): no-op, idempotent.
+  #   - anything else shaped unexpectedly: no-op, never crash on it.
+  def updated_protocol_options(opts) do
+    case opts do
+      %{stream_handlers: handlers} ->
+        if :cowboy_telemetry_h in handlers do
+          :unchanged
+        else
+          {:changed, %{opts | stream_handlers: [:cowboy_telemetry_h | handlers]}, "existing stream_handlers"}
+        end
+
+      %{} = opts ->
+        updated = Map.put(opts, :stream_handlers, [:cowboy_telemetry_h, :cowboy_stream_h])
+        {:changed, updated, "default stream_handlers"}
+
+      _ ->
+        :unchanged
     end
   end
 
@@ -180,15 +200,25 @@ defmodule OtelAutoBootstrap do
   defp setup_ecto_repos do
     if Code.ensure_loaded?(Ecto.Repo) and function_exported?(Ecto.Repo, :all_running, 0) do
       for repo <- Ecto.Repo.all_running() do
-        prefix =
-          repo.config()[:telemetry_prefix] ||
-            repo |> Module.split() |> Enum.map(&(&1 |> Macro.underscore() |> String.to_atom()))
+        prefix = ecto_telemetry_prefix(repo, repo.config())
 
         safe_setup("ecto #{inspect(repo)} prefix=#{inspect(prefix)}", fn ->
           OpentelemetryEcto.setup(prefix)
         end)
       end
     end
+  end
+
+  @doc false
+  # Pure derivation logic for setup_ecto_repos/0, split out so it's
+  # unit-testable without a running repo. `telemetry_prefix` is standard
+  # Ecto repo config (defaults to the repo module's own name, snake_cased,
+  # when the app never set it explicitly) — reading it directly answers
+  # "how does a zero-code agent discover the repo's telemetry prefix?"
+  # without requiring any user configuration.
+  def ecto_telemetry_prefix(repo, config) do
+    config[:telemetry_prefix] ||
+      repo |> Module.split() |> Enum.map(&(&1 |> Macro.underscore() |> String.to_atom()))
   end
 
   defp safe_setup(label, fun) do

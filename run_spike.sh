@@ -9,7 +9,7 @@ set -euo pipefail
 
 SPIKE_DIR="$(cd "$(dirname "$0")" && pwd)"
 RELEASE="$SPIKE_DIR/vanilla_app/_build/prod/rel/vanilla_app/bin/vanilla_app"
-BUNDLE_LIB="$SPIKE_DIR/otel_bundle/_build/prod/lib"
+BUNDLE_LIB="$SPIKE_DIR/_build/prod/lib"
 OUT_DIR="${SPIKE_OUT_DIR:-/tmp/otel-spike}"
 APP_PORT="${APP_PORT:-4000}"
 COLLECTOR_PORT="${COLLECTOR_PORT:-4318}"

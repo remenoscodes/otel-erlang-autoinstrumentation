@@ -44,9 +44,9 @@ jobs:
           path: |
             vanilla_app/deps
             vanilla_app/_build
-            otel_bundle/deps
-            otel_bundle/_build
-          key: mix-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('vanilla_app/mix.lock', 'otel_bundle/mix.lock') }}
+            deps
+            _build
+          key: mix-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('vanilla_app/mix.lock', 'mix.lock') }}
           restore-keys: |
             mix-${{ matrix.otp }}-${{ matrix.elixir }}-
 
@@ -56,11 +56,13 @@ jobs:
           mix deps.get
           MIX_ENV=prod mix release --overwrite
 
-      - name: Build otel_bundle (the auto-instrumentation distribution)
-        working-directory: otel_bundle
+      - name: Build otel_auto_bootstrap (the auto-instrumentation distribution)
         run: |
           mix deps.get
           MIX_ENV=prod mix compile
+
+      - name: Run package tests
+        run: mix test
 
       - name: Phase 0 + round 2 — Phoenix/Ecto zero-code spike
         run: ./run_spike.sh

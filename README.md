@@ -12,25 +12,71 @@ telemetry dependency at all** was instrumented the same way, including a
 live retrofit of `cowboy_telemetry` onto an already-running listener
 (Phase 0.5, below).
 
-This is Phase 0 of the plan to bring Erlang/Elixir support to the
-[OpenTelemetry Operator](https://github.com/open-telemetry/opentelemetry-operator)'s
+This package is the payload half of a plan to bring Erlang/Elixir support to
+the [OpenTelemetry Operator](https://github.com/open-telemetry/opentelemetry-operator)'s
 auto-instrumentation matrix (`inject-erlang`), following the same
 architecture the Operator uses for Java/Node/Python/.NET/Go and that PHP is
 currently landing: initContainer copies an instrumentation payload into a
 shared volume, and a mutating webhook alters only the pod's environment.
+See [`PROPOSAL.md`](./PROPOSAL.md) for the full design and the path to get
+there.
 
-## The experiment
+## Installation
+
+Not yet published to Hex. Once it is:
+
+```elixir
+def deps do
+  [{:otel_auto_bootstrap, "~> 0.1.0"}]
+end
+```
+
+In the meantime, install from GitHub:
+
+```elixir
+def deps do
+  [{:otel_auto_bootstrap, github: "remenoscodes/otel-erlang-autoinstrumentation"}]
+end
+```
+
+Ordinary Mix-dependency installation is for local development/testing of
+this package only, though — the whole point of the design (see
+"Layout" and `PROPOSAL.md`) is that the *target* application never depends
+on this package at all. It's meant to be compiled once into a distribution
+image and mounted into the target release from outside via an
+initContainer, exactly like the Operator's existing Java/Python/Node/.NET/Go
+support. `run_spike.sh`/`run_spike_erlang.sh` show that mechanism end to
+end.
+
+## Layout
 
 ```
-vanilla_app/          Phoenix 1.7 + Bandit + Ecto (SQLite) app, built with
-                      `mix release`. Deliberately contains NO otel deps.
-otel_bundle/          The "auto-instrumentation distribution": OTel SDK,
-                      OTLP exporter, contrib instrumentations (phoenix,
-                      bandit, ecto) + one extra OTP app, otel_auto_bootstrap,
-                      which activates everything inside a foreign release.
-fake_collector.exs    Minimal OTLP/HTTP receiver that logs which span names
-                      arrive (span names travel as plain bytes in protobuf).
-run_spike.sh          Orchestrates the experiment and asserts the result.
+lib/, src/, mix.exs    The package itself (:otel_auto_bootstrap on Hex): the
+                      OTel SDK, OTLP exporter, contrib instrumentations
+                      (phoenix, bandit, ecto, cowboy) as deps, plus the two
+                      modules that activate everything inside a foreign,
+                      already-booted release — otel_auto_bootstrap_shim.erl
+                      (phase 0/1, plain Erlang) and OtelAutoBootstrap (phase
+                      2/3, Elixir). See both modules' moduledocs for why
+                      that split exists.
+
+vanilla_app/           Integration test fixture: Phoenix 1.7 + Bandit + Ecto
+                      (SQLite) app, built with `mix release`. Deliberately
+                      contains NO otel deps.
+vanilla_app_erlang/    Integration test fixture: plain Cowboy, no Elixir, no
+                      Mix, no telemetry dependency at all.
+fake_collector.exs    Minimal OTLP/HTTP receiver used by both integration
+                      scripts below; logs which span names arrive (span
+                      names travel as plain bytes in protobuf).
+run_spike.sh           Builds vanilla_app + this package, then instruments
+                      the former from outside and asserts real spans reach
+                      fake_collector.exs. Phases 0, 2 (round 2 hardening),
+                      and the OTP version-matrix check.
+run_spike_erlang.sh    Same, against vanilla_app_erlang. Phase 0.5.
+test/                  Unit tests for the package's testable pure logic —
+                      NOT a substitute for the two integration scripts
+                      above, which are what actually prove the zero-code
+                      claim end-to-end against a real release boot.
 ```
 
 The *entire* injection surface — what a Kubernetes mutating webhook would
@@ -312,9 +358,10 @@ environment before a release ever booted.
 
 `vanilla_app_erlang` is therefore built by hand instead, and
 `run_spike_erlang.sh` does it every run: `erlc` for the app's own three
-modules, a hand-written `.rel` file, and `systools:make_script/2` for the
-boot script — using the cowboy/cowlib/ranch that `mix compile` already
-produced under `otel_bundle/_build/prod/lib/` (no separate fetch). This is
+modules, a `.rel` file generated dynamically from whatever's on the live
+code path (see "Phase 2" below for why), and `systools:make_script/2` for
+the boot script — using the cowboy/cowlib/ranch that `mix compile` already
+produced under `_build/prod/lib/` (no separate fetch). This is
 no less representative of a real release boot for what this spike tests:
 `systools` is the same tool `relx` calls internally, so the boot-script
 mechanics (embedded mode, `{path, ...}` + `{primLoad, ...}` instructions)
@@ -327,16 +374,16 @@ end-to-end against **OTP 28.5.0.5 / Elixir 1.20.2** — the toolchain of
 `match_os`, the umbrella project this work originated from, built from
 source in this environment (no distro/precompiled package was reachable)
 since round 1 and round 2 only had OTP 25 / Elixir 1.17 available. Both
-passed, unmodified: the same
-`otel_bundle` source, recompiled under OTP 28, instrumented both vanilla
-apps exactly as it did under OTP 25. `vanilla_app_erlang.rel` no longer
+passed, unmodified: the same package source, recompiled under OTP 28,
+instrumented both vanilla apps exactly as it did under OTP 25.
+`vanilla_app_erlang.rel` no longer
 hardcodes application versions — `run_spike_erlang.sh` now generates it by
 reading each app's actual `vsn` from the live code path at boot-script
 generation time, which is what made testing a second OTP major possible
 without hand-editing version numbers.
 
 **This is also where the "per-OTP-major build" requirement stopped being
-theoretical.** Rebuilding `otel_bundle` under OTP 28 overwrote the same
+theoretical.** Rebuilding this package under OTP 28 overwrote the same
 `_build/prod/lib` directory the OTP 25 spike had been using (both mix
 projects share one `_build` path regardless of toolchain — a spike-hygiene
 gap worth knowing about, not a bootstrapper issue). Running the OTP 25
@@ -393,16 +440,18 @@ collision and not a regression.)
 
 ## Running it
 
-Requires Erlang/OTP + Elixir + `curl`:
+Requires Erlang/OTP + Elixir + `curl`. From the repository root:
 
 ```sh
-# Phase 0: Phoenix + Ecto, mix release
-cd vanilla_app  && mix deps.get && MIX_ENV=prod mix release --overwrite
-cd ../otel_bundle && mix deps.get && MIX_ENV=prod mix compile
-cd .. && ./run_spike.sh
+mix deps.get && MIX_ENV=prod mix compile   # this package
 
-# Phase 0.5: plain Cowboy, pure-Erlang release, no Elixir/Mix in the target app
-# (otel_bundle must already be compiled, as above — no separate build step
-# for vanilla_app_erlang; run_spike_erlang.sh builds it by hand each run)
-./run_spike_erlang.sh
+cd vanilla_app && mix deps.get && MIX_ENV=prod mix release --overwrite
+cd ..
+
+./run_spike.sh          # Phase 0 + round 2 + OTP matrix: Phoenix + Ecto, mix release
+./run_spike_erlang.sh   # Phase 0.5: plain Cowboy, pure-Erlang release, no Elixir/Mix
+                        # in the target app (vanilla_app_erlang is built by hand,
+                        # by the script itself, on every run)
+
+mix test                 # unit tests for the package's testable pure logic
 ```

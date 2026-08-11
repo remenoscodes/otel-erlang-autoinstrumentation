@@ -13,7 +13,7 @@ set -euo pipefail
 
 SPIKE_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$SPIKE_DIR/vanilla_app_erlang"
-BUNDLE_LIB="$SPIKE_DIR/otel_bundle/_build/prod/lib"
+BUNDLE_LIB="$SPIKE_DIR/_build/prod/lib"
 OUT_DIR="${SPIKE_OUT_DIR:-/tmp/otel-spike-erlang}"
 APP_PORT="${APP_PORT:-4020}"
 COLLECTOR_PORT="${COLLECTOR_PORT:-4319}"
@@ -74,9 +74,9 @@ echo "==> generating .rel + boot script for the pure-Erlang release (no Elixir, 
 rm -f ./*.boot ./*.script ./*.rel
 erl -noshell \
   -pa ebin \
-  -pa "$SPIKE_DIR/otel_bundle/_build/prod/lib/cowboy/ebin" \
-  -pa "$SPIKE_DIR/otel_bundle/_build/prod/lib/cowlib/ebin" \
-  -pa "$SPIKE_DIR/otel_bundle/_build/prod/lib/ranch/ebin" \
+  -pa "$SPIKE_DIR/_build/prod/lib/cowboy/ebin" \
+  -pa "$SPIKE_DIR/_build/prod/lib/cowlib/ebin" \
+  -pa "$SPIKE_DIR/_build/prod/lib/ranch/ebin" \
   -eval '
     Apps = [kernel, stdlib, crypto, asn1, public_key, ssl, ranch, cowlib, cowboy],
     AppEntries = lists:map(
@@ -118,9 +118,9 @@ export PORT="$APP_PORT"
 
 PORT="$APP_PORT" erl -noshell -mode embedded \
   -pa ebin \
-  -pa "$SPIKE_DIR/otel_bundle/_build/prod/lib/cowboy/ebin" \
-  -pa "$SPIKE_DIR/otel_bundle/_build/prod/lib/cowlib/ebin" \
-  -pa "$SPIKE_DIR/otel_bundle/_build/prod/lib/ranch/ebin" \
+  -pa "$SPIKE_DIR/_build/prod/lib/cowboy/ebin" \
+  -pa "$SPIKE_DIR/_build/prod/lib/cowlib/ebin" \
+  -pa "$SPIKE_DIR/_build/prod/lib/ranch/ebin" \
   -boot ./vanilla_app_erlang \
   -sname vanilla_erl_spike \
   > "$OUT_DIR/app.log" 2>&1 &

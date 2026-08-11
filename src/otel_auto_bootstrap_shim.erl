@@ -32,6 +32,15 @@
 
 -export([start/0]).
 
+-ifdef(TEST).
+%% Test-only exports for the pure/deterministic helpers below, so
+%% test/otel_auto_bootstrap_shim_test.exs can exercise them directly
+%% instead of only through the full start/0 -> run/0 side-effecting path.
+%% Gated behind -DTEST (set via erlc_options in mix.exs for MIX_ENV=test
+%% only) so these stay unexported in any real bundle build.
+-export([app_name_from_dir/1, list_bundle_apps/1, dependency_closure/1, try_load/1]).
+-endif.
+
 -define(GUARD_KEY, {?MODULE, started}).
 
 %% Guards against double invocation (e.g. reboot_system_after_config:

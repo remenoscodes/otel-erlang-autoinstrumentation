@@ -267,11 +267,11 @@ See [`README.md`](./README.md) for full command-by-command instructions.
 Short version, from the repository root:
 
 ```sh
-# Phase 0 + round 2 hardening: Phoenix + Ecto, mix release
-cd vanilla_app  && mix deps.get && MIX_ENV=prod mix release --overwrite
-cd ../otel_bundle && mix deps.get && MIX_ENV=prod mix compile
-cd .. && ./run_spike.sh
+mix deps.get && MIX_ENV=prod mix compile   # this package
 
-# Phase 0.5: plain Cowboy, pure-Erlang release, no Elixir/Mix in the target app
-./run_spike_erlang.sh
+cd vanilla_app && mix deps.get && MIX_ENV=prod mix release --overwrite
+cd ..
+
+./run_spike.sh          # Phase 0 + round 2 hardening: Phoenix + Ecto, mix release
+./run_spike_erlang.sh   # Phase 0.5: plain Cowboy, pure-Erlang release, no Elixir/Mix
 ```
