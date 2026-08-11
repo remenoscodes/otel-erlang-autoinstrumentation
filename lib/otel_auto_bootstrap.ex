@@ -176,7 +176,8 @@ defmodule OtelAutoBootstrap do
         if :cowboy_telemetry_h in handlers do
           :unchanged
         else
-          {:changed, %{opts | stream_handlers: [:cowboy_telemetry_h | handlers]}, "existing stream_handlers"}
+          {:changed, %{opts | stream_handlers: [:cowboy_telemetry_h | handlers]},
+           "existing stream_handlers"}
         end
 
       %{} = opts ->

@@ -58,11 +58,10 @@ defmodule OtelAutoBootstrap.MixProject do
   end
 
   defp description do
-    "Zero-code OpenTelemetry auto-instrumentation bootstrapper for BEAM " <>
-      "(Erlang/Elixir) releases — the payload half of an " <>
-      "OpenTelemetry Operator inject-erlang mechanism. Loads the OTel SDK " <>
-      "and contrib instrumentations into a foreign, already-booted release " <>
-      "via -eval, with zero source/build changes to the target application."
+    "Zero-code OpenTelemetry auto-instrumentation for BEAM (Erlang/Elixir) " <>
+      "releases. Loads the OTel SDK and contrib instrumentations into a " <>
+      "foreign, already-booted release via -eval — no source or build " <>
+      "changes to the target application."
   end
 
   defp package do

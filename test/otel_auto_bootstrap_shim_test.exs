@@ -15,7 +15,9 @@ defmodule OtelAutoBootstrapShimTest do
     end
 
     test "handles underscores in the app name" do
-      assert :otel_auto_bootstrap_shim.app_name_from_dir(~c"opentelemetry_semantic_conventions-1.27.0") ==
+      assert :otel_auto_bootstrap_shim.app_name_from_dir(
+               ~c"opentelemetry_semantic_conventions-1.27.0"
+             ) ==
                :opentelemetry_semantic_conventions
     end
 

@@ -32,7 +32,8 @@ defmodule OtelAutoBootstrapTest do
   describe "updated_protocol_options/1" do
     test "no stream_handlers key at all: adds the default plus the retrofit, in front" do
       assert OtelAutoBootstrap.updated_protocol_options(%{}) ==
-               {:changed, %{stream_handlers: [:cowboy_telemetry_h, :cowboy_stream_h]}, "default stream_handlers"}
+               {:changed, %{stream_handlers: [:cowboy_telemetry_h, :cowboy_stream_h]},
+                "default stream_handlers"}
     end
 
     test "preserves other protocol option keys when applying the default" do
@@ -49,7 +50,8 @@ defmodule OtelAutoBootstrapTest do
       opts = %{stream_handlers: [:cowboy_stream_h]}
 
       assert OtelAutoBootstrap.updated_protocol_options(opts) ==
-               {:changed, %{stream_handlers: [:cowboy_telemetry_h, :cowboy_stream_h]}, "existing stream_handlers"}
+               {:changed, %{stream_handlers: [:cowboy_telemetry_h, :cowboy_stream_h]},
+                "existing stream_handlers"}
     end
 
     test "cowboy_telemetry_h already present: unchanged (idempotent — safe on a second retrofit attempt)" do
