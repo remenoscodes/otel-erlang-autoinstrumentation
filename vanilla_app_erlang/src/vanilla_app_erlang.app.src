@@ -1,0 +1,9 @@
+{application, vanilla_app_erlang, [
+    {description, "Pure-Erlang Cowboy app, zero Elixir, zero OTel"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {mod, {vanilla_app_erlang_app, []}},
+    {modules, [vanilla_app_erlang_app, vanilla_app_erlang_sup, items_handler]},
+    {applications, [kernel, stdlib, cowboy]},
+    {env, []}
+]}.

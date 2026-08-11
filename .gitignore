@@ -1,0 +1,11 @@
+*/_build/
+*/deps/
+*/.mix/
+erl_crash.dump
+*.db
+vanilla_app_erlang/ebin/
+vanilla_app_erlang/_checkouts/
+vanilla_app_erlang/rebar.lock
+vanilla_app_erlang/*.boot
+vanilla_app_erlang/*.script
+vanilla_app_erlang/*.rel
