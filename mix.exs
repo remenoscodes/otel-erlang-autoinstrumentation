@@ -23,7 +23,25 @@ defmodule OtelAutoBootstrap.MixProject do
       name: "otel_auto_bootstrap",
       source_url: @source_url,
       docs: docs(),
-      erlc_options: erlc_options()
+      erlc_options: erlc_options(),
+      dialyzer: dialyzer()
+    ]
+  end
+
+  defp dialyzer do
+    [
+      # :ecto, :phoenix, and :bandit are deliberately NOT deps of this
+      # package (they're detected via Code.ensure_loaded?/1 at runtime,
+      # provided by whatever host release this gets injected into) — so
+      # they're not addable to the PLT, and Dialyzer's closed-world
+      # analysis can't see past the ensure_loaded?/1 guards around calls
+      # into them. That produces exactly one expected unknown_function
+      # warning (Ecto.Repo.all_running/0), silenced in .dialyzer_ignore.exs
+      # with the same explanation. Everything else in plt_add_apps here IS
+      # a real dependency of this package.
+      plt_add_apps: [:mix, :ranch, :cowboy, :cowboy_telemetry],
+      flags: [:error_handling, :underspecs],
+      ignore_warnings: ".dialyzer_ignore.exs"
     ]
   end
 
@@ -53,7 +71,8 @@ defmodule OtelAutoBootstrap.MixProject do
       {:opentelemetry_bandit, "~> 0.2"},
       {:opentelemetry_ecto, "~> 1.2"},
       {:opentelemetry_cowboy, "~> 1.0"},
-      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.31", only: :dev, runtime: false},
+      {:dialyxir, "~> 1.4", only: :dev, runtime: false}
     ]
   end
 

@@ -454,4 +454,10 @@ cd ..
                         # by the script itself, on every run)
 
 mix test                 # unit tests for the package's testable pure logic
+mix dialyzer              # static analysis (first run builds a PLT, ~2 min)
+mix hex.build              # validates the package builds a publishable tarball
 ```
+
+See [`SECURITY.md`](./SECURITY.md) for the one known advisory that currently
+applies (in a transitive dependency, `cowlib` — not in this package's own
+code) and why it's not currently actionable.

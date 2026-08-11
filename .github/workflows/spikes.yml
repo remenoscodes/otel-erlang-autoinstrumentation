@@ -64,6 +64,12 @@ jobs:
       - name: Run package tests
         run: mix test
 
+      - name: Static analysis (Dialyzer)
+        # PLT lives under _build/dev, already covered by the mix-deps
+        # cache above — first run per OTP version builds it (~2 min),
+        # every run after reuses it.
+        run: mix dialyzer
+
       - name: Phase 0 + round 2 — Phoenix/Ecto zero-code spike
         run: ./run_spike.sh
 

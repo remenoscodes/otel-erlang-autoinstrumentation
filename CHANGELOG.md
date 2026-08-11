@@ -30,9 +30,18 @@ PROPOSAL.md for the full narrative.
   Elixir/Mix anywhere) and the two scripts that boot them with this
   package injected entirely from outside, exactly as an
   OpenTelemetry Operator `inject-erlang` mechanism would.
-- CI (`.github/workflows/spikes.yml`) running both integration spikes and
-  the unit test suite on every push, matrixed across OTP 25/Elixir 1.17
-  and OTP 28/Elixir 1.20.
+- CI (`.github/workflows/spikes.yml`) running both integration spikes, the
+  unit test suite, and Dialyzer on every push, matrixed across OTP
+  25/Elixir 1.17 and OTP 28/Elixir 1.20.
+- Dialyzer (`mix dialyzer`), with `.dialyzer_ignore.exs` documenting the
+  one expected warning (a call into `Ecto.Repo`, deliberately not a
+  dependency of this package — see the ignore file and `mix.exs`'s
+  `dialyzer/0` for why).
+- `SECURITY.md` documenting the one currently-known advisory (in `cowlib`,
+  a transitive dependency — not in this package's own code) and why it
+  isn't actionable yet.
+- `.formatter.exs`, and `mix hex.build` verified to produce a valid,
+  publishable package tarball (not yet published — see "Installation").
 
 ### Known limitations
 
