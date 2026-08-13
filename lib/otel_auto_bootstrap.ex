@@ -92,6 +92,7 @@ defmodule OtelAutoBootstrap do
     if Code.ensure_loaded?(Phoenix), do: setup_phoenix()
     setup_ecto_repos()
     setup_req()
+    setup_oban()
   end
 
   @doc false
@@ -100,17 +101,23 @@ defmodule OtelAutoBootstrap do
   # i.e. did the HOST's own release boot load it, as opposed to this
   # bundle transitively supplying it?
   #
-  # Needed specifically because not every contrib package follows the
-  # "declare the instrumented library as a dev/test-only dependency"
-  # convention: opentelemetry_phoenix/opentelemetry_bandit do (so this
-  # bundle never carries its own phoenix/bandit, and Code.ensure_loaded?/1
-  # alone is a reliable "does the host use this" signal for them), but
-  # opentelemetry_req declares `req` as a normal, unconditional dependency
-  # — so this bundle DOES carry its own copy of Req, and
-  # Code.ensure_loaded?(Req) would be true on every host regardless of
-  # whether it actually uses Req. See otel_auto_bootstrap_shim.erl's
+  # Needed specifically because not every contrib package — nor every
+  # TRANSITIVE dependency of one — follows the "declare the instrumented
+  # library as a dev/test-only dependency" convention:
+  # opentelemetry_phoenix/opentelemetry_bandit do (so this bundle never
+  # carries its own phoenix/bandit, and Code.ensure_loaded?/1 alone is a
+  # reliable "does the host use this" signal for them), but
+  # opentelemetry_req and opentelemetry_oban declare `req`/`oban` as
+  # normal, unconditional dependencies of their own — and oban itself pulls
+  # in `ecto_sql`/`ecto` the same way, one level further down, which is
+  # what makes setup_ecto_repos/0 need this guard too even though
+  # opentelemetry_ecto itself declares ecto correctly. Any of these means
+  # this bundle DOES carry its own copy, and a plain Code.ensure_loaded?/1
+  # check would be true on every host regardless of whether it actually
+  # uses the library. See otel_auto_bootstrap_shim.erl's
   # `record_host_loaded_apps/0` for where this gets captured, and
-  # setup_req/0 below for the only place today that needs it.
+  # setup_ecto_repos/0, setup_req/0, and setup_oban/0 below for the three
+  # places today that need it.
   def host_provided?(app) do
     app in :persistent_term.get({:otel_auto_bootstrap_shim, :host_loaded_apps}, [])
   end
@@ -220,8 +227,23 @@ defmodule OtelAutoBootstrap do
   # gives us every started repo — and each repo's config carries its
   # telemetry_prefix. This answers the "how does a zero-code agent discover
   # the repo's telemetry prefix?" question without any user configuration.
+  #
+  # host_provided?(:ecto) is required here for the same reason setup_req/0
+  # and setup_oban/0 need it, but discovered a level deeper: opentelemetry_
+  # ecto itself correctly declares ecto_sql as dev/test-only, so it alone
+  # never puts :ecto in this bundle — but oban (a REAL dependency of
+  # opentelemetry_oban) declares ecto_sql as a normal, unconditional
+  # dependency of its own. The moment opentelemetry_oban was added, :ecto
+  # became part of this bundle transitively through oban, and
+  # Code.ensure_loaded?(Ecto.Repo) alone stopped meaning "the host uses
+  # Ecto" — it became true on every host, Ecto or not. Caught by
+  # run_spike_erlang.sh: Ecto.Repo.all_running/0 calls :ets.match/2 against
+  # a registry table that only exists once some Ecto.Repo has actually
+  # started, so on a host with no Ecto at all this raised :badarg instead
+  # of just finding zero repos.
   defp setup_ecto_repos do
-    if Code.ensure_loaded?(Ecto.Repo) and function_exported?(Ecto.Repo, :all_running, 0) do
+    if Code.ensure_loaded?(Ecto.Repo) and function_exported?(Ecto.Repo, :all_running, 0) and
+         host_provided?(:ecto) do
       for repo <- Ecto.Repo.all_running() do
         prefix = ecto_telemetry_prefix(repo, repo.config())
 
@@ -291,6 +313,22 @@ defmodule OtelAutoBootstrap do
       :unchanged
     else
       {:changed, Keyword.put(current, :plugins, [OpentelemetryReq | plugins])}
+    end
+  end
+
+  # Unlike Req, Oban's OpentelemetryOban.setup/1 IS a plain global
+  # :telemetry.attach_many call (subscribing to [:oban, :job, ...] and
+  # [:oban, :plugin, ...], which Oban emits regardless of how many named
+  # instances are running in the VM) — the same "detect + call setup()"
+  # shape as Bandit/Phoenix. The only reason this isn't as simple as those
+  # is the same one Req needed: opentelemetry_oban declares `oban` as a
+  # normal dependency, so host_provided?/1 is required here too (see its
+  # doc). No repo-style enumeration needed, unlike setup_ecto_repos/0 —
+  # Oban's telemetry events aren't namespaced per instance name.
+  defp setup_oban do
+    if Code.ensure_loaded?(Oban) and Code.ensure_loaded?(OpentelemetryOban) and
+         host_provided?(:oban) do
+      safe_setup("oban", fn -> OpentelemetryOban.setup() end)
     end
   end
 

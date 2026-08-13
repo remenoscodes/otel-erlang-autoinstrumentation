@@ -37,7 +37,8 @@ defmodule VanillaApp.MixProject do
       # a genuinely vanilla app that already uses Req gets its outbound
       # calls traced with zero code of its own — this app never imports or
       # calls OpentelemetryReq anywhere.
-      {:req, "~> 0.5"}
+      {:req, "~> 0.5"},
+      {:oban, "~> 2.19"}
     ]
   end
 end

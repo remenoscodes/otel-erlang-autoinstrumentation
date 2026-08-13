@@ -1,6 +1,6 @@
 # Proposal: zero-code OpenTelemetry auto-instrumentation for BEAM releases
 
-Status: draft, backed by five passing spikes in this repository,
+Status: draft, backed by six passing spikes in this repository,
 including a two-OTP-major compatibility check and a working Hex package
 (`otel_auto_bootstrap`, not yet published). Written to be posted as a
 GitHub Discussion / RFC to
@@ -30,13 +30,15 @@ packages. The work is entirely in the bootstrap layer: getting those
 packages loaded and activated inside a release that was never built to know
 about them.
 
-Five spikes in this repo (Phoenix on `mix release`, hardening for
+Six spikes in this repo (Phoenix on `mix release`, hardening for
 production edge cases, a from-scratch pure-Erlang Cowboy release with no
-Elixir/Mix anywhere, a two-OTP-major compatibility check, and a Req HTTP
+Elixir/Mix anywhere, a two-OTP-major compatibility check, a Req HTTP
 client coverage expansion that also produced a real scoping criterion for
-what belongs in this bundle) validate that this is possible with an
-environment-variables-only injection surface — the same surface the
-Operator already uses for every other language.
+what belongs in this bundle, and an Oban job-queue expansion that
+surfaced a transitive-dependency sharp edge one level deeper than Req's)
+validate that this is possible with an environment-variables-only
+injection surface — the same surface the Operator already uses for every
+other language.
 
 ## Motivation
 
@@ -271,6 +273,41 @@ optional-dependency vs. hard-dependency contrib package — is a real,
 checkable criterion for scoping future coverage, not just a judgment call
 per library.
 
+### Phase 3b — Oban, and a transitive-dependency sharp edge one level deeper
+
+Adding Oban job-queue tracing (`opentelemetry_oban`) was, on its own terms,
+the cheapest addition yet: `OpentelemetryOban.setup/1` IS a plain global
+`:telemetry.attach_many` call (unlike Req), so it fits the existing
+detect-and-activate pattern directly. It still needed the `host_provided?/1`
+check Req required, for the same reason — `opentelemetry_oban` declares
+`oban` as a normal, unconditional dependency.
+
+What it also did, unexpectedly, was break an *already-shipped and already-
+verified* instrumentation: `oban` itself declares `ecto_sql` (and
+transitively `ecto`) as a normal, unconditional dependency, unlike
+`opentelemetry_ecto`, which correctly scopes `ecto_sql` to
+`only: [:dev, :test]`. Adding Oban's dependency chain silently made
+`:ecto` part of this bundle's own transitive closure on every host, which
+broke the "`Code.ensure_loaded?(Ecto.Repo)` means the host uses Ecto"
+assumption Ecto support had relied on since Phase 0. The pure-Erlang
+fixture (no Ecto anywhere in its tree) caught it immediately: bootstrap
+crashed with `{error, badarg}` inside `Ecto.Repo.all_running/0` (an ETS
+table lookup against a registry that only exists once some repo has
+actually started), silently skipping every instrumentation queued behind
+it. Fixed the same way as Req/Oban, one dependency hop later:
+`setup_ecto_repos/0` now also requires `host_provided?(:ecto)`.
+
+The finding that matters for the SIG isn't the fix — it's that **the
+dependency closure is shared across the whole bundle, not scoped per
+instrumentation**. Adding any one contrib package can silently change what
+is transitively true for every other instrumentation already in the
+bundle, in a way no unit test catches, only an integration boot against a
+host with a genuinely different dependency shape does. Any future
+coverage-expansion process needs to audit the *entire* new dependency
+tree for `only: [:dev, :test]` compliance, not just the library being
+directly instrumented — and re-run every existing integration fixture, not
+only the new one.
+
 ## Open question
 
 One gap remains deliberately unresolved by these spikes, and is the right
@@ -278,15 +315,19 @@ place for SIG input before an implementation lands:
 
 - **Distribution scope and ownership.** Should the bundle attempt to cover
   every `opentelemetry-erlang-contrib` instrumentation, or ship a
-  deliberately small v0 (Phoenix/Bandit/Cowboy/Ecto/Req, as spiked) and grow
-  incrementally — using the Phase 3 criterion above (telemetry-event-based
-  and optional-dependency contrib packages fit the existing pattern
-  directly; per-instance-opt-in and hard-dependency packages need their own
-  mechanism evaluated case by case)? Should `otel_auto_bootstrap` live in
-  `contrib` itself, so it's versioned alongside the instrumentations it
-  activates? And now that "one build per OTP major" is confirmed necessary
-  rather than merely prudent, how many majors get supported concurrently,
-  and who maintains that build matrix?
+  deliberately small v0 (Phoenix/Bandit/Cowboy/Ecto/Req/Oban, as spiked) and
+  grow incrementally — using the Phase 3/3b criteria above
+  (telemetry-event-based and optional-dependency contrib packages fit the
+  existing pattern directly; per-instance-opt-in and hard-dependency
+  packages need their own mechanism evaluated case by case; and every
+  addition needs its *entire* transitive dependency tree audited for
+  `only: [:dev, :test]` compliance, not just the library it directly
+  instruments, since the bundle's dependency closure is shared across all
+  instrumentations at once)? Should `otel_auto_bootstrap` live in `contrib`
+  itself, so it's versioned alongside the instrumentations it activates?
+  And now that "one build per OTP major" is confirmed necessary rather than
+  merely prudent, how many majors get supported concurrently, and who
+  maintains that build matrix?
 
 ## Proposed path
 

@@ -10,5 +10,6 @@ defmodule VanillaAppWeb.Router do
 
     get "/items", ItemController, :index
     get "/outbound", ItemController, :outbound
+    get "/jobs", ItemController, :jobs
   end
 end

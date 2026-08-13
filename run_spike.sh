@@ -113,7 +113,14 @@ echo "==> issuing a request that exercises the Req client instrumentation"
 # only needs the same grace period already elapsed above, not its own.
 curl -sf "http://127.0.0.1:$APP_PORT/outbound" > /dev/null
 
-echo "==> waiting for span export (batch processor delay)"
+echo "==> issuing a request that exercises the Oban job instrumentation"
+# vanilla_app never imports or calls OpentelemetryOban — see
+# ItemController.jobs/2. Unlike /outbound, this only enqueues a job; Oban's
+# own queue picks it up asynchronously (default poll/stage interval is
+# sub-second), well within the export wait below.
+curl -sf "http://127.0.0.1:$APP_PORT/jobs" > /dev/null
+
+echo "==> waiting for span export (batch processor delay) and Oban job execution"
 sleep 10
 
 echo
@@ -142,8 +149,9 @@ if grep -q 'POST /v1/traces' "$OUT_DIR/collector.log" &&
    grep -q 'GET /items' "$OUT_DIR/collector.log" &&
    grep -q 'vanilla_app.repo.query' "$OUT_DIR/collector.log" &&
    grep -q 'internal.invalid' "$OUT_DIR/collector.log" &&
+   grep -q 'process default' "$OUT_DIR/collector.log" &&
    grep -q 'vanilla-app-spike' "$OUT_DIR/collector.log"; then
-  echo "SPIKE RESULT: PASS — Phoenix + Ecto + Req spans exported over OTLP from an unmodified release"
+  echo "SPIKE RESULT: PASS — Phoenix + Ecto + Req + Oban spans exported over OTLP from an unmodified release"
 else
   echo "SPIKE RESULT: FAIL — expected spans did not reach the collector"
   exit 1

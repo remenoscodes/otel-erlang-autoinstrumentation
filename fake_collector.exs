@@ -37,7 +37,8 @@ defmodule FakeCollector do
           "items",
           "vanilla-app-spike",
           "vanilla-app-erlang-spike",
-          "internal.invalid"
+          "internal.invalid",
+          "process default"
         ]
         |> Enum.filter(&String.contains?(body, &1))
 

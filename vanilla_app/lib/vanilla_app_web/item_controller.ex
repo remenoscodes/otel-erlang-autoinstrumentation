@@ -27,4 +27,14 @@ defmodule VanillaAppWeb.ItemController do
     {:ok, resp} = Req.get(req, url: "/ping")
     json(conn, %{outbound_status: resp.status})
   end
+
+  # Proves the Oban instrumentation the same way /outbound proves Req: this
+  # app never imports or calls OpentelemetryOban, and inserting a job is the
+  # only thing this action does — Oban's own queue picks it up and runs it
+  # asynchronously, so the job span (if any) reached the collector entirely
+  # through instrumentation attached from outside the release.
+  def jobs(conn, _params) do
+    {:ok, job} = VanillaApp.PingWorker.new(%{}) |> Oban.insert()
+    json(conn, %{job_id: job.id})
+  end
 end

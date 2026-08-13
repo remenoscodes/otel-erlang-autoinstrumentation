@@ -30,15 +30,19 @@ defmodule OtelAutoBootstrap.MixProject do
 
   defp dialyzer do
     [
-      # :ecto, :phoenix, and :bandit are deliberately NOT deps of this
-      # package (they're detected via Code.ensure_loaded?/1 at runtime,
-      # provided by whatever host release this gets injected into) — so
-      # they're not addable to the PLT, and Dialyzer's closed-world
-      # analysis can't see past the ensure_loaded?/1 guards around calls
-      # into them. That produces exactly one expected unknown_function
-      # warning (Ecto.Repo.all_running/0), silenced in .dialyzer_ignore.exs
-      # with the same explanation. Everything else in plt_add_apps here IS
-      # a real dependency of this package.
+      # :phoenix and :bandit are deliberately NOT deps of this package
+      # (they're detected via Code.ensure_loaded?/1 at runtime, provided by
+      # whatever host release this gets injected into) — so Dialyzer's
+      # closed-world analysis can't see past the ensure_loaded?/1 guards
+      # around calls into them, but that never produces a warning since
+      # nothing here calls into their modules directly by name except
+      # through those guards. :ecto used to be in the same boat (see
+      # .dialyzer_ignore.exs's history), but opentelemetry_oban's own
+      # dependency chain (oban -> ecto_sql -> ecto) made it a real,
+      # PLT-visible dependency of this package, so Ecto.Repo.all_running/0
+      # is no longer an unknown_function warning — nothing needs silencing
+      # today. Everything in plt_add_apps here IS a real dependency of this
+      # package.
       plt_add_apps: [:mix, :ranch, :cowboy, :cowboy_telemetry],
       flags: [:error_handling, :underspecs],
       ignore_warnings: ".dialyzer_ignore.exs"
@@ -72,6 +76,7 @@ defmodule OtelAutoBootstrap.MixProject do
       {:opentelemetry_ecto, "~> 1.2"},
       {:opentelemetry_cowboy, "~> 1.0"},
       {:opentelemetry_req, "~> 1.0"},
+      {:opentelemetry_oban, "~> 1.2"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:dialyxir, "~> 1.4", only: :dev, runtime: false}
     ]

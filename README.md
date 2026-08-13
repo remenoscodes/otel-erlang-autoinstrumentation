@@ -6,8 +6,8 @@ License: [Apache 2.0](./LICENSE)
 **Status: PASS on both tested hosts.** A production-style Phoenix
 `mix release` containing **zero OpenTelemetry code** was instrumented
 entirely from outside the release, exporting Phoenix + Ecto + outbound
-Req client spans over OTLP/HTTP without touching `mix.exs`, application
-source, or the build (Phase 0 + Phase 3). A pure-Erlang Cowboy release
+Req client + Oban job spans over OTLP/HTTP without touching `mix.exs`,
+application source, or the build (Phase 0 + Phase 3). A pure-Erlang Cowboy release
 with **no Elixir, no Mix, and no telemetry dependency at all** was
 instrumented the same way, including a live retrofit of
 `cowboy_telemetry` onto an already-running listener (Phase 0.5, below).
@@ -53,16 +53,16 @@ end.
 ```
 lib/, src/, mix.exs    The package itself (:otel_auto_bootstrap on Hex): the
                       OTel SDK, OTLP exporter, contrib instrumentations
-                      (phoenix, bandit, ecto, cowboy, req) as deps, plus the
-                      two modules that activate everything inside a foreign,
-                      already-booted release — otel_auto_bootstrap_shim.erl
-                      (phase 0/1, plain Erlang) and OtelAutoBootstrap (phase
-                      2/3, Elixir). See both modules' moduledocs for why
-                      that split exists.
+                      (phoenix, bandit, ecto, cowboy, req, oban) as deps,
+                      plus the two modules that activate everything inside a
+                      foreign, already-booted release —
+                      otel_auto_bootstrap_shim.erl (phase 0/1, plain Erlang)
+                      and OtelAutoBootstrap (phase 2/3, Elixir). See both
+                      modules' moduledocs for why that split exists.
 
 vanilla_app/           Integration test fixture: Phoenix 1.7 + Bandit + Ecto
-                      (SQLite) app, built with `mix release`. Deliberately
-                      contains NO otel deps.
+                      (SQLite) + Oban (SQLite engine) app, built with `mix
+                      release`. Deliberately contains NO otel deps.
 vanilla_app_erlang/    Integration test fixture: plain Cowboy, no Elixir, no
                       Mix, no telemetry dependency at all.
 fake_collector.exs    Minimal OTLP/HTTP receiver used by both integration
@@ -476,6 +476,59 @@ in mind for any future coverage expansion: the former slots into the
 existing detect-and-activate pattern directly; the latter needs its own
 mechanism, evaluated per-library, the way Req's `:plugins` hook and the
 host-provenance check were found here.
+
+## Phase 3b: Oban, and a transitive-dependency sharp edge one level deeper than Req's
+
+[Oban](https://hexdocs.pm/oban)'s `OpentelemetryOban.setup/1` IS a plain
+`:telemetry.attach_many` call against `[:oban, :job, ...]` /
+`[:oban, :plugin, ...]` — events Oban emits regardless of how many named
+instances are running, not per-instance-namespaced the way Req's client
+structs are. That puts it back in the "detect + call `setup()`" shape
+Bandit/Phoenix/Ecto already use, and it's exactly as cheap to add as that
+shape suggests: `setup_oban/0` is a direct
+`Code.ensure_loaded?(Oban) and Code.ensure_loaded?(OpentelemetryOban) and host_provided?(:oban)`
+guard around `OpentelemetryOban.setup()`, no new mechanism required.
+`opentelemetry_oban` declares `oban` as a normal, unconditional dependency
+— the same situation Req was in — so `host_provided?/1` (already built for
+Req) was needed here too, and nothing else.
+
+What wasn't cheap, and wasn't anticipated, showed up one dependency level
+further down. `oban` itself declares `ecto_sql` (and transitively `ecto`)
+as a normal, unconditional dependency of its own — unlike
+`opentelemetry_ecto`, which correctly declares `ecto_sql` as
+`only: [:dev, :test]`. The moment `opentelemetry_oban` was added to this
+package's own deps, `:ecto` became part of this bundle's dependency closure
+regardless of whether the *target host* uses Ecto — meaning
+`setup_ecto_repos/0`'s `Code.ensure_loaded?(Ecto.Repo)` check, which had
+been a reliable "the host uses Ecto" signal since Phase 0, silently stopped
+being one. `run_spike_erlang.sh` (no Ecto anywhere in its dependency tree)
+caught it immediately: bootstrap crashed with `{error, badarg}` from inside
+`Ecto.Repo.all_running/0`, which calls `:ets.match/2` against a registry
+table that is only created once some `Ecto.Repo` process has actually
+started — a host with no Ecto at all has no such table. The Erlang-side
+`try/catch` around the whole bootstrap kept this from crashing the host
+application, but it did silently skip every other instrumentation still
+queued behind it in `activate_instrumentations/0` (`setup_req/0` and
+`setup_oban/0`, in this case) — a correctness bug, not just a cosmetic one.
+
+The fix is the same shape as Req/Oban's, applied one dependency hop later
+than either of them: `setup_ecto_repos/0` now also requires
+`host_provided?(:ecto)`. Verified both directions again:
+`vanilla_app` (a real Ecto user) still gets
+`instrumentation active: ecto ...`; `vanilla_app_erlang` now reaches
+`[otel_auto_bootstrap] done` cleanly with no crash, and correctly claims
+none of Ecto, Req, or Oban.
+
+The generalizable lesson isn't "check `host_provided?/1` for Req and
+Oban" — it's that adding any contrib package can change what's
+transitively true of *every other* contrib package already in the bundle,
+because Hex dependency resolution is a single shared closure, not one per
+instrumentation. Any future addition needs its own dependency tree audited
+for `only: [:dev, :test]` compliance, not just the library it's directly
+instrumenting — and ideally re-running both integration fixtures (not just
+unit tests) after every such addition, since this exact failure mode is
+invisible to a unit test suite that never boots a host with a different
+dependency shape.
 
 ## Known gaps
 
