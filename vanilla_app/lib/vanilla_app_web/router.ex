@@ -9,5 +9,6 @@ defmodule VanillaAppWeb.Router do
     pipe_through :api
 
     get "/items", ItemController, :index
+    get "/outbound", ItemController, :outbound
   end
 end

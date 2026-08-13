@@ -1,7 +1,8 @@
 # Proposal: zero-code OpenTelemetry auto-instrumentation for BEAM releases
 
-Status: draft, backed by four passing spikes in this repository,
-including a two-OTP-major compatibility check. Written to be posted as a
+Status: draft, backed by five passing spikes in this repository,
+including a two-OTP-major compatibility check and a working Hex package
+(`otel_auto_bootstrap`, not yet published). Written to be posted as a
 GitHub Discussion / RFC to
 the OpenTelemetry Erlang/Elixir SIG
 (`open-telemetry/opentelemetry-erlang-contrib`) ahead of any
@@ -29,11 +30,13 @@ packages. The work is entirely in the bootstrap layer: getting those
 packages loaded and activated inside a release that was never built to know
 about them.
 
-Four spikes in this repo (Phoenix on `mix release`, hardening for
+Five spikes in this repo (Phoenix on `mix release`, hardening for
 production edge cases, a from-scratch pure-Erlang Cowboy release with no
-Elixir/Mix anywhere, and a two-OTP-major compatibility check) validate that
-this is possible with an environment-variables-only injection surface —
-the same surface the Operator already uses for every other language.
+Elixir/Mix anywhere, a two-OTP-major compatibility check, and a Req HTTP
+client coverage expansion that also produced a real scoping criterion for
+what belongs in this bundle) validate that this is possible with an
+environment-variables-only injection surface — the same surface the
+Operator already uses for every other language.
 
 ## Motivation
 
@@ -231,6 +234,43 @@ auto-instrumentation image's approach: a real distribution needs one build
 per supported OTP major, published separately, not a single "newest wins"
 artifact.
 
+### Phase 3 — coverage expansion, and a real scoping criterion
+
+Attempting to add `opentelemetry_req` (Req HTTP client tracing) the same
+way as everything above — detect, call `setup()` — surfaced two problems
+that don't apply to Phoenix/Bandit/Cowboy/Ecto, and together give the SIG
+a concrete criterion for the open scoping question below, not just a
+hand-wave toward "grow incrementally."
+
+1. Req has no global `:telemetry`-shaped switch to flip; `OpentelemetryReq`
+   instruments one `%Req.Request{}` at a time. It does expose a different
+   global hook — `Req.new/1` runs a `:plugins` list pulled from
+   `Req.default_options/0` — so
+   `Req.default_options(plugins: [OpentelemetryReq | existing])`
+   retroactively instruments every subsequent `Req.new/1` call process-wide,
+   merged in without clobbering anything the host already configured.
+2. `opentelemetry_phoenix`/`opentelemetry_bandit` declare their target
+   library as a dev/test-only dependency, so this bundle never carries its
+   own copy — `Code.ensure_loaded?/1` alone reliably means "the host has
+   this." `opentelemetry_req` declares `req` as a normal dependency, so the
+   bundle transitively loads Req's own modules regardless of whether the
+   target host uses Req — the same detection check would report "in use"
+   on every release. Fixed by snapshotting `application:loaded_applications()`
+   before phase 0/1 touches anything, so the Elixir layer can tell "the
+   host's own boot already had this" apart from "this bundle's own
+   dependency closure happened to load it."
+
+Verified both directions end to end, symmetric with the Cowboy retrofit's
+own two-sided verification: a host with a real Req dependency gets a real
+client span with zero code of its own; a host with no Req in its
+dependency tree — despite this bundle transitively loading Req's modules
+onto it regardless — correctly never claims the instrumentation is active.
+
+This distinction — `:telemetry`-event-based vs. per-instance opt-in;
+optional-dependency vs. hard-dependency contrib package — is a real,
+checkable criterion for scoping future coverage, not just a judgment call
+per library.
+
 ## Open question
 
 One gap remains deliberately unresolved by these spikes, and is the right
@@ -238,12 +278,15 @@ place for SIG input before an implementation lands:
 
 - **Distribution scope and ownership.** Should the bundle attempt to cover
   every `opentelemetry-erlang-contrib` instrumentation, or ship a
-  deliberately small v0 (Phoenix/Bandit/Cowboy/Ecto, as spiked) and grow
-  incrementally? Should `otel_auto_bootstrap` live in `contrib` itself, so
-  it's versioned alongside the instrumentations it activates? And now that
-  "one build per OTP major" is confirmed necessary rather than merely
-  prudent, how many majors get supported concurrently, and who maintains
-  that build matrix?
+  deliberately small v0 (Phoenix/Bandit/Cowboy/Ecto/Req, as spiked) and grow
+  incrementally — using the Phase 3 criterion above (telemetry-event-based
+  and optional-dependency contrib packages fit the existing pattern
+  directly; per-instance-opt-in and hard-dependency packages need their own
+  mechanism evaluated case by case)? Should `otel_auto_bootstrap` live in
+  `contrib` itself, so it's versioned alongside the instrumentations it
+  activates? And now that "one build per OTP major" is confirmed necessary
+  rather than merely prudent, how many majors get supported concurrently,
+  and who maintains that build matrix?
 
 ## Proposed path
 

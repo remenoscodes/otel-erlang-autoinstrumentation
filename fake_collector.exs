@@ -36,7 +36,8 @@ defmodule FakeCollector do
           "vanilla_app.repo.query",
           "items",
           "vanilla-app-spike",
-          "vanilla-app-erlang-spike"
+          "vanilla-app-erlang-spike",
+          "internal.invalid"
         ]
         |> Enum.filter(&String.contains?(body, &1))
 

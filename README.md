@@ -5,12 +5,12 @@ License: [Apache 2.0](./LICENSE)
 
 **Status: PASS on both tested hosts.** A production-style Phoenix
 `mix release` containing **zero OpenTelemetry code** was instrumented
-entirely from outside the release, exporting Phoenix + Ecto spans over
-OTLP/HTTP without touching `mix.exs`, application source, or the build
-(Phase 0). A pure-Erlang Cowboy release with **no Elixir, no Mix, and no
-telemetry dependency at all** was instrumented the same way, including a
-live retrofit of `cowboy_telemetry` onto an already-running listener
-(Phase 0.5, below).
+entirely from outside the release, exporting Phoenix + Ecto + outbound
+Req client spans over OTLP/HTTP without touching `mix.exs`, application
+source, or the build (Phase 0 + Phase 3). A pure-Erlang Cowboy release
+with **no Elixir, no Mix, and no telemetry dependency at all** was
+instrumented the same way, including a live retrofit of
+`cowboy_telemetry` onto an already-running listener (Phase 0.5, below).
 
 This package is the payload half of a plan to bring Erlang/Elixir support to
 the [OpenTelemetry Operator](https://github.com/open-telemetry/opentelemetry-operator)'s
@@ -53,8 +53,8 @@ end.
 ```
 lib/, src/, mix.exs    The package itself (:otel_auto_bootstrap on Hex): the
                       OTel SDK, OTLP exporter, contrib instrumentations
-                      (phoenix, bandit, ecto, cowboy) as deps, plus the two
-                      modules that activate everything inside a foreign,
+                      (phoenix, bandit, ecto, cowboy, req) as deps, plus the
+                      two modules that activate everything inside a foreign,
                       already-booted release — otel_auto_bootstrap_shim.erl
                       (phase 0/1, plain Erlang) and OtelAutoBootstrap (phase
                       2/3, Elixir). See both modules' moduledocs for why
@@ -407,6 +407,75 @@ a single "newest wins" build. (Restoring the OTP 25 build afterward — clean
 `mix deps.get` + `mix compile`/`mix release` under OTP 25 — made both
 spikes pass again, confirming this was purely the shared-`_build`
 collision and not a regression.)
+
+## Phase 3: expanding coverage — Req, and why not every library fits this model
+
+Every instrumentation up through Phase 0.5 (Phoenix, Bandit, plain Cowboy,
+Ecto) shares one property: the OpenTelemetry contrib package activates
+tracing by attaching to a **global** `:telemetry` event stream (or, for
+plain Cowboy, a **global** per-listener `stream_handlers` option — see the
+retrofit above). "Detect the library is present, flip one global switch"
+works because there's always exactly one switch to flip.
+
+Adding `opentelemetry_req` (tracing for the [Req](https://hexdocs.pm/req)
+HTTP client) broke that assumption in two different ways, both found by
+trying to apply the exact same pattern and watching it not fit.
+
+**No global switch to flip.** `OpentelemetryReq.attach/2` instruments one
+specific `%Req.Request{}` at a time — there's no `:telemetry` event stream
+for outbound Req calls, and nothing in the library forces requests through
+a common instrumentable choke point (a `Req.Request` is just a struct any
+code can build from scratch). "Detect Req is loaded, call `setup()`" has
+nothing to call. Req does provide a real global extension point for this,
+though, just not a `:telemetry`-shaped one:
+[`Req.new/1`](https://hexdocs.pm/req/Req.html#new/1) pulls a `:plugins`
+option out of whatever `Req.default_options/0` currently returns and runs
+each one as `plugin.attach(request)` — and `OpentelemetryReq` exports
+exactly that shape. So
+`Req.default_options(plugins: [OpentelemetryReq | existing_plugins])`
+retroactively instruments every `Req.new/1` call made from that point
+forward, process-wide, with zero code in the host application — preserving
+any plugins/options the host already configured (`OtelAutoBootstrap.updated_default_options/1`
+handles the merge, and is idempotent against a second bootstrap run). This
+has the same startup-race shape as everything else in this bundle, except
+smaller: `Req.new/1` re-reads `default_options()` fresh on every call
+(nothing is cached at compile time), so *any* Req client built after the
+bootstrap's grace period picks up the plugin — there's no per-connection
+pinning the way Cowboy's retrofit has.
+
+**"Is it loaded" stops being a reliable detection signal once the bundle
+loads its own copy.** `opentelemetry_phoenix`/`opentelemetry_bandit`
+declare `phoenix`/`bandit` as `only: [:dev, :test]` dependencies — a
+convention that keeps this bundle from ever carrying its own copy, which
+is *why* `Code.ensure_loaded?/1` reliably means "the host provided this."
+`opentelemetry_req` declares `req` as a normal, unconditional dependency
+instead, so this bundle's own dependency-closure walk (phase 0/1) loads
+Req's modules regardless of whether the target host uses Req at all — a
+naive `Code.ensure_loaded?(Req)` check would be `true` on every single
+release this bundle touches, host usage or not. Verified directly:
+`vanilla_app_erlang` (no Req anywhere in its dependency tree) still ends
+up with `Req` loaded, purely as a transitive dependency of this bundle
+itself.
+
+The fix generalizes past just Req: `otel_auto_bootstrap_shim`'s `run/0`
+now snapshots `application:loaded_applications()` — i.e. what the
+**host's own release boot** already had loaded — before phase 0/1 touches
+anything (`record_host_loaded_apps/0`), and hands that snapshot to the
+Elixir layer as `OtelAutoBootstrap.host_provided?/1`. `setup_req/0` only
+activates when both `Code.ensure_loaded?(Req)` *and* `host_provided?(:req)`
+are true. Verified both directions end to end: `vanilla_app` (a real Req
+dependency, exercised via a new `/outbound` route that never imports or
+calls `OpentelemetryReq` itself) gets `instrumentation active: req` and a
+real client span reaches the collector; `vanilla_app_erlang` — despite
+transitively loading Req's modules, same as any host would from this
+bundle — correctly never claims Req is active.
+
+This distinction (`:telemetry`-event-based vs. per-instance-opt-in,
+optional-dependency vs. hard-dependency contrib packages) is worth keeping
+in mind for any future coverage expansion: the former slots into the
+existing detect-and-activate pattern directly; the latter needs its own
+mechanism, evaluated per-library, the way Req's `:plugins` hook and the
+host-provenance check were found here.
 
 ## Known gaps
 

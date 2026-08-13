@@ -64,4 +64,59 @@ defmodule OtelAutoBootstrapTest do
       assert OtelAutoBootstrap.updated_protocol_options(opts) == :unchanged
     end
   end
+
+  describe "host_provided?/1" do
+    # Mirrors what otel_auto_bootstrap_shim's record_host_loaded_apps/0
+    # actually writes — same key, same shape (a plain list of app atoms).
+    setup do
+      on_exit(fn -> :persistent_term.erase({:otel_auto_bootstrap_shim, :host_loaded_apps}) end)
+    end
+
+    test "true when the app is in the recorded host-loaded snapshot" do
+      :persistent_term.put({:otel_auto_bootstrap_shim, :host_loaded_apps}, [:req, :kernel])
+      assert OtelAutoBootstrap.host_provided?(:req)
+    end
+
+    test "false when the app is absent from the snapshot" do
+      :persistent_term.put({:otel_auto_bootstrap_shim, :host_loaded_apps}, [:kernel])
+      refute OtelAutoBootstrap.host_provided?(:req)
+    end
+
+    test "false (not a crash) when the shim never ran and no snapshot exists at all" do
+      refute OtelAutoBootstrap.host_provided?(:req)
+    end
+  end
+
+  describe "updated_default_options/1" do
+    test "no existing options at all: adds OpentelemetryReq as the sole plugin" do
+      assert OtelAutoBootstrap.updated_default_options([]) ==
+               {:changed, [plugins: [OpentelemetryReq]]}
+    end
+
+    test "preserves every other existing default option (base_url, headers, ...)" do
+      current = [base_url: "https://example.com", headers: [{"x-app", "demo"}]]
+
+      assert {:changed, updated} = OtelAutoBootstrap.updated_default_options(current)
+      assert updated[:base_url] == "https://example.com"
+      assert updated[:headers] == [{"x-app", "demo"}]
+      assert updated[:plugins] == [OpentelemetryReq]
+    end
+
+    test "existing plugins the host already configured: OpentelemetryReq is prepended, not replacing them" do
+      current = [plugins: [SomeHostPlugin]]
+
+      assert OtelAutoBootstrap.updated_default_options(current) ==
+               {:changed, [plugins: [OpentelemetryReq, SomeHostPlugin]]}
+    end
+
+    test "OpentelemetryReq already present (e.g. a second bootstrap run): unchanged, not duplicated" do
+      current = [plugins: [OpentelemetryReq]]
+      assert OtelAutoBootstrap.updated_default_options(current) == :unchanged
+    end
+
+    test "OpentelemetryReq present alongside other plugins: still unchanged" do
+      current = [plugins: [SomeHostPlugin, OpentelemetryReq]]
+      assert OtelAutoBootstrap.updated_default_options(current) == :unchanged
+    end
+  end
 end

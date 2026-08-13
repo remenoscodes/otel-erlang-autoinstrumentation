@@ -5,7 +5,7 @@ All notable changes to `otel_auto_bootstrap` are documented here.
 ## [0.1.0] - unreleased
 
 Initial version. Not yet published to Hex — see README.md's "Installation"
-section. Validated by four end-to-end spikes (`run_spike.sh`,
+section. Validated by five end-to-end spikes (`run_spike.sh`,
 `run_spike_erlang.sh`) and a unit test suite (`mix test`); see README.md and
 PROPOSAL.md for the full narrative.
 
@@ -19,13 +19,23 @@ PROPOSAL.md for the full narrative.
   retry noise from the code server during loading.
 - `OtelAutoBootstrap` (Elixir): phase 2/3 — starts the OTel SDK + OTLP
   exporter, then detects and activates whichever of Phoenix, Bandit, plain
-  Cowboy, and Ecto repos are actually present in the host release.
+  Cowboy, Ecto repos, and the Req HTTP client are actually present/used in
+  the host release.
+- Req client instrumentation via `Req.default_options(plugins: [OpentelemetryReq | ...])`
+  — Req's own global plugin hook, since (unlike Phoenix/Bandit/Ecto/Cowboy)
+  it has no `:telemetry`-shaped switch to detect-and-flip. Guarded by
+  `OtelAutoBootstrap.host_provided?/1`, which distinguishes "the host's own
+  release boot loaded this app" from "this bundle's own dependency closure
+  happened to load it" — needed specifically because `opentelemetry_req`,
+  unlike the other contrib packages here, declares `req` as a normal
+  (not dev/test-only) dependency, so this bundle always carries its own
+  copy regardless of host usage.
 - Plain-Cowboy retrofit: `cowboy_telemetry_h` is installed onto
   already-running Ranch listeners via `ranch:set_protocol_options/2`, with
   zero configuration required from the target application.
 - Ecto repo telemetry-prefix auto-discovery via `Ecto.Repo.all_running/0` —
   no user configuration needed.
-- Integration test fixtures (`vanilla_app/`, a Phoenix + Ecto `mix
+- Integration test fixtures (`vanilla_app/`, a Phoenix + Ecto + Req `mix
   release`; `vanilla_app_erlang/`, a pure-Erlang Cowboy release with no
   Elixir/Mix anywhere) and the two scripts that boot them with this
   package injected entirely from outside, exactly as an

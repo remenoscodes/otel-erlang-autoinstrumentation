@@ -105,6 +105,14 @@ curl -sf "http://127.0.0.1:$APP_PORT/items"
 echo
 curl -sf "http://127.0.0.1:$APP_PORT/items" > /dev/null
 
+echo "==> issuing a request that exercises the Req client instrumentation"
+# vanilla_app never imports or calls OpentelemetryReq — see
+# ItemController.outbound/2. Its Req client is built fresh on every
+# request (Req.new/1 re-reads the current global default_options each
+# time), so — unlike the Cowboy retrofit's per-CONNECTION race — this one
+# only needs the same grace period already elapsed above, not its own.
+curl -sf "http://127.0.0.1:$APP_PORT/outbound" > /dev/null
+
 echo "==> waiting for span export (batch processor delay)"
 sleep 10
 
@@ -133,8 +141,9 @@ echo
 if grep -q 'POST /v1/traces' "$OUT_DIR/collector.log" &&
    grep -q 'GET /items' "$OUT_DIR/collector.log" &&
    grep -q 'vanilla_app.repo.query' "$OUT_DIR/collector.log" &&
+   grep -q 'internal.invalid' "$OUT_DIR/collector.log" &&
    grep -q 'vanilla-app-spike' "$OUT_DIR/collector.log"; then
-  echo "SPIKE RESULT: PASS — Phoenix + Ecto spans exported over OTLP from an unmodified release"
+  echo "SPIKE RESULT: PASS — Phoenix + Ecto + Req spans exported over OTLP from an unmodified release"
 else
   echo "SPIKE RESULT: FAIL — expected spans did not reach the collector"
   exit 1

@@ -42,6 +42,7 @@
 -endif.
 
 -define(GUARD_KEY, {?MODULE, started}).
+-define(HOST_APPS_KEY, {?MODULE, host_loaded_apps}).
 
 %% Guards against double invocation (e.g. reboot_system_after_config:
 %% true, which runs the whole boot sequence — ERL_AFLAGS included — twice)
@@ -65,6 +66,7 @@ start() ->
 run() ->
     try
         log(io_lib:format("starting; code mode: ~p", [code:get_mode()])),
+        record_host_loaded_apps(),
         BundleLib = bundle_lib_dir(),
         Apps = list_bundle_apps(BundleLib),
         add_paths(Apps),
@@ -84,6 +86,36 @@ hand_off_to_elixir() ->
         Error ->
             log(io_lib:format("cannot load OtelAutoBootstrap: ~p", [Error]))
     end.
+
+%% -- host-vs-bundle provenance ------------------------------------------------
+%%
+%% Most instrumented libraries (Phoenix, Bandit, Ecto, Cowboy) are safe to
+%% detect with a plain Code.ensure_loaded?/1 check on the Elixir side,
+%% because their OpenTelemetry contrib packages declare the instrumented
+%% library itself as a dev/test-only dependency (`only: [:dev, :test]`) —
+%% so this bundle never carries a copy of Phoenix/Bandit/Ecto/Cowboy of its
+%% own, and "is it loaded" can only mean "the host provided it".
+%%
+%% Not every contrib package follows that convention: opentelemetry_req
+%% declares `req` as a normal, unconditional dependency, so THIS bundle
+%% transitively ships its own copy of Req. On a host that never uses Req
+%% at all, this phase's own dependency-closure walk (below) would load
+%% Req's modules regardless — making a naive Code.ensure_loaded?(Req)
+%% check on the Elixir side always true, whether or not the host actually
+%% uses Req. That would misreport "host uses Req" and configure a plugin
+%% the host never asked for on every single release, which conflicts with
+%% this whole bundle's actual detection philosophy (only activate what
+%% the release actually uses).
+%%
+%% The fix: snapshot which OTP applications are already loaded — i.e.
+%% loaded by the release's OWN boot, before this module touches anything
+%% — right here, before add_paths/dependency_closure ever run. Elixir-side
+%% checks (OtelAutoBootstrap.host_provided?/1) can then tell "the host's
+%% own boot already had this app" apart from "this bundle's dependency
+%% closure happened to load it".
+record_host_loaded_apps() ->
+    HostApps = [App || {App, _Desc, _Vsn} <- application:loaded_applications()],
+    persistent_term:put(?HOST_APPS_KEY, HostApps).
 
 %% -- bundle discovery + code path -------------------------------------------
 

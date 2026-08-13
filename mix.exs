@@ -71,6 +71,7 @@ defmodule OtelAutoBootstrap.MixProject do
       {:opentelemetry_bandit, "~> 0.2"},
       {:opentelemetry_ecto, "~> 1.2"},
       {:opentelemetry_cowboy, "~> 1.0"},
+      {:opentelemetry_req, "~> 1.0"},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
       {:dialyxir, "~> 1.4", only: :dev, runtime: false}
     ]

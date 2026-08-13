@@ -91,6 +91,28 @@ defmodule OtelAutoBootstrap do
     if Code.ensure_loaded?(:cowboy), do: setup_cowboy()
     if Code.ensure_loaded?(Phoenix), do: setup_phoenix()
     setup_ecto_repos()
+    setup_req()
+  end
+
+  @doc false
+  # Was `app` already a loaded OTP application before this bundle's own
+  # phase 0/1 (otel_auto_bootstrap_shim's dependency-closure walk) ran —
+  # i.e. did the HOST's own release boot load it, as opposed to this
+  # bundle transitively supplying it?
+  #
+  # Needed specifically because not every contrib package follows the
+  # "declare the instrumented library as a dev/test-only dependency"
+  # convention: opentelemetry_phoenix/opentelemetry_bandit do (so this
+  # bundle never carries its own phoenix/bandit, and Code.ensure_loaded?/1
+  # alone is a reliable "does the host use this" signal for them), but
+  # opentelemetry_req declares `req` as a normal, unconditional dependency
+  # — so this bundle DOES carry its own copy of Req, and
+  # Code.ensure_loaded?(Req) would be true on every host regardless of
+  # whether it actually uses Req. See otel_auto_bootstrap_shim.erl's
+  # `record_host_loaded_apps/0` for where this gets captured, and
+  # setup_req/0 below for the only place today that needs it.
+  def host_provided?(app) do
+    app in :persistent_term.get({:otel_auto_bootstrap_shim, :host_loaded_apps}, [])
   end
 
   defp setup_bandit do
@@ -220,6 +242,56 @@ defmodule OtelAutoBootstrap do
   def ecto_telemetry_prefix(repo, config) do
     config[:telemetry_prefix] ||
       repo |> Module.split() |> Enum.map(&(&1 |> Macro.underscore() |> String.to_atom()))
+  end
+
+  # Req has no global "instrument every request" switch the way :telemetry-
+  # based libraries do — OpentelemetryReq.attach/2 opts in one specific
+  # %Req.Request{} at a time, meaning the naive "detect + call setup()"
+  # pattern used everywhere else in this module has nothing global to hook.
+  #
+  # Req does have a real global extension point for exactly this purpose,
+  # though: Req.new/1 pops a `:plugins` option out of whatever
+  # Req.default_options/0 currently returns and runs each one as
+  # `plugin.attach(request)` (see deps/req/lib/req.ex's `run_plugins/2`) —
+  # and OpentelemetryReq itself exports `attach/1` with that exact shape.
+  # So `Req.default_options(plugins: [OpentelemetryReq | existing])`
+  # retroactively instruments every `Req.new/1` call made from this point
+  # forward, process-wide, with zero code in the host application. This
+  # has the same startup-race shape as everything else here: a Req client
+  # already built via Req.new/1 before this runs keeps whatever plugins it
+  # already had.
+  #
+  # host_provided?/1 above is what keeps this from firing on a host that
+  # never uses Req at all — see its own doc for why that check exists.
+  defp setup_req do
+    if Code.ensure_loaded?(Req) and Code.ensure_loaded?(OpentelemetryReq) and
+         host_provided?(:req) do
+      safe_setup("req", fn ->
+        case updated_default_options(Req.default_options()) do
+          {:changed, updated} -> Req.default_options(updated)
+          :unchanged -> :ok
+        end
+
+        :ok
+      end)
+    end
+  end
+
+  @doc false
+  # Pure decision logic for setup_req/0, split out so it's unit-testable
+  # without Req itself loaded. Preserves every existing default option
+  # (base_url, headers, any plugins the host already configured, ...) and
+  # only adds OpentelemetryReq to :plugins if it isn't already there —
+  # idempotent, so a second bootstrap run (reboot_system_after_config)
+  # never double-registers it.
+  def updated_default_options(current) do
+    plugins = Keyword.get(current, :plugins, [])
+
+    if OpentelemetryReq in plugins do
+      :unchanged
+    else
+      {:changed, Keyword.put(current, :plugins, [OpentelemetryReq | plugins])}
+    end
   end
 
   defp safe_setup(label, fun) do

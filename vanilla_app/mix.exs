@@ -31,7 +31,13 @@ defmodule VanillaApp.MixProject do
       {:bandit, "~> 1.5"},
       {:jason, "~> 1.4"},
       {:ecto_sql, "~> 3.11"},
-      {:ecto_sqlite3, "~> 0.17"}
+      {:ecto_sqlite3, "~> 0.17"},
+      # Req IS a real dependency here — unlike opentelemetry deps, which
+      # this app has none of. The point of the /outbound route is to prove
+      # a genuinely vanilla app that already uses Req gets its outbound
+      # calls traced with zero code of its own — this app never imports or
+      # calls OpentelemetryReq anywhere.
+      {:req, "~> 0.5"}
     ]
   end
 end
